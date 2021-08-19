@@ -1,0 +1,216 @@
+// Keywords: nonWF, non-Wright-Fisher, migration, dispersal
+
+initialize() {
+	initializeSLiMModelType("nonWF");
+	defineConstant("optimaFile", "/Users/s0784966/UBC/Moi_Mutation_Area/Slim_configs/BC_Map_environments.14x14.txt");
+	defineConstant("K", 100);     // carrying capacity per subpop
+	defineConstant("subPopCount", 25);     // number of subpopulations
+	defineConstant("m", 0.0375);   // migration rate
+	defineConstant("Vs", 192); // Variance of Gaussian fitness function
+	defineConstant("sig_a", 0.1); // SD of the DPE 
+
+   defineConstant("sideLength",sqrt(subPopCount));
+//	defineConstant("e", 0.0);    // subpopulation extinction rate // GET RID OF THIS
+	
+	initializeMutationType("m1", 0.5, "f", 0.0);
+	initializeMutationType("m2", 0.5, "n", 0.0, sig_a);
+	m1.convertToSubstitution = T;
+	m2.convertToSubstitution = F;
+	
+	initializeGenomicElementType("g1", c(m1, m2), c(0.7, 0.3));
+	initializeGenomicElement(g1, 0, 99999);
+	initializeMutationRate(1e-7);
+	initializeRecombinationRate(1e-8);
+}
+
+
+reproduction() {
+	subpop.addCrossed(individual, subpop.sampleIndividuals(1));
+}
+
+fitness(m2) {
+	return 1.0;
+}
+
+1 early() {
+//	optimaList = c(-2, -2, 0, 0, -2, -2, 0, 0, 0, 0, 2, 2, 0, 0, 2, 2);
+	optimaList = readFile(optimaFile);	
+	cat(optimaList);
+	for (i in 1:subPopCount){
+		sim.addSubpop(i, 10);
+		sim.subpopulations[i-1].tag = asInteger(optimaList[i-1]);
+	}
+}
+
+early() {
+// spatially structured migration
+	for (p in (1:subPopCount)-1){ 
+//		print( '' );
+//		print( "population:"+(p+1) );
+	// Get the number of individuals in the population
+		nIndividuals = sim.subpopulations[p].individualCount;
+		if (nIndividuals < 5){
+			next;
+			}
+	// Sample a number of migrants to send out of the population		
+		nMigrants = rpois(1, nIndividuals * m);
+		migrants = sample(sim.subpopulations[p].individuals, nMigrants);
+	
+	// Make a list of possible destinations
+		destinations = c();
+	// Get the column and row of the current population
+		row = asInteger(floor(p/sideLength));
+//		print( "row " + row );
+		
+		col = asInteger(p - floor(sideLength * row));
+//		print( "col " +  col );
+		
+		
+	// Get migrants from neighbouring demes
+	
+	// NOTE, there is a hellish bit of flipping back and forth between 0 and 1 based indexing here!
+		if (col != 0){
+			destinations = c(destinations, c(p - 1));
+		}
+		if (col < sideLength-1){
+			destinations = c(destinations, c(p +1 ));
+		}
+		if (row > 0){
+			destinations = c(destinations, c(p - sideLength));
+		}
+		if (row < sideLength -1){
+			destinations = c(destinations, c(p + sideLength));
+		}
+//		print( "dest:" + (destinations+1) );
+
+//		print(" migrants ");
+		for (migrant in migrants)
+		{
+//			print( migrant);
+			//print(sim.subpopulations);
+			destination = sample(destinations, 1)-1;
+//			print(destinations);
+//			print(destination);
+			dest = sim.subpopulations[sample(destinations, 1)];
+				
+			dest.takeMigrants(migrant);
+		}
+	}
+}
+
+// For the first portion of the simulation, we'll just let the 
+// populations evolve under density dependance
+
+1:100 early(){
+// density-dependence
+	for (subpop in sim.subpopulations)
+	{
+		subpop.fitnessScaling = K / subpop.individualCount;
+	}
+}
+
+
+// For the second portion of the simulation, we'll just let the 
+// populations evolve under stabilising selection
+
+101:200 early(){
+// density-dependence
+
+	for (subpop in sim.subpopulations)
+	{
+		densityRegulation = K / subpop.individualCount;
+
+		inds = subpop.individuals;	
+	// Calculate the phenotype as the additive combination 
+	// of m2 alleles in an individual
+		inds.z = inds.sumOfMutationsOfType(m2);
+//		optimum = inds.subpopulation.tag;
+//		IndividualFitness = exp( - ((optimum - inds.z)^2)/(2*Vs));
+		IndividualFitness = exp( - ((0 - inds.z)^2)/(2*Vs));
+//		print("Fitness:");
+//		print(IndividualFitness);
+		inds.fitnessScaling = densityRegulation * IndividualFitness;
+//		print(inds.fitnessScaling);
+	}
+
+}
+
+
+// For the third portion of the simulation, we'll just let the 
+// populations evolve under density dependance and local stabilising selection
+
+201:10200 early(){
+	for (subpop in sim.subpopulations)
+	{
+		densityRegulation = K / subpop.individualCount;
+
+		inds = subpop.individuals;	
+	// Calculate the phenotype as the additive combination 
+	// of m2 alleles in an individual
+		inds.z = inds.sumOfMutationsOfType(m2);
+		optimum = inds.subpopulation.tag;
+		IndividualFitness = exp( - ((optimum - inds.z)^2)/(2*Vs));
+//		print("Fitness:");
+//		print(IndividualFitness);
+		inds.fitnessScaling = densityRegulation * IndividualFitness;
+//		print(inds.fitnessScaling);
+//		print("Optima:");
+//		print(inds.subpopulation.tag);
+//		print("Phenotypes:");
+//		print(inds.z);
+
+	}
+
+}
+
+
+
+// This next chunk of code models the destruction of habitats 
+// It kill off populations at the periphery of the simulation
+// the exact configuration of these will vary
+// to start with I'll remove the exterior rows and columns
+// later on I'll make it such that the subpopulations can be specified via input file
+
+16201: early(){
+
+	for (p in (1:subPopCount)-1){ 
+
+		row = asInteger(floor(p/sideLength));		
+		col = asInteger(p - floor(sideLength * row));
+
+		if (row == 0) {
+		 	sim.subpopulations[p].fitnessScaling = 0;
+		}
+		if (row == sideLength-1) {
+		 	sim.subpopulations[p].fitnessScaling = 0;
+		}
+		if (col == 0) {
+		 	sim.subpopulations[p].fitnessScaling = 0;
+		}
+		if (col == sideLength-1) {
+		 	sim.subpopulations[p].fitnessScaling = 0;
+		}
+	}
+}
+
+
+// Unlikely, but if the individual count goes to 0 then print this message and generate the simulation output
+late() {
+	if (sum(sim.subpopulations.individualCount) == 0)
+		stop("Global extinction in generation " + sim.generation + ".");
+}
+
+
+// This chunk of code generates the output data
+
+10201:20200 late() {
+	if (sim.generation % 1200 == 0){
+		for (i in 1:subPopCount){
+			if ( sim.subpopulations[ i-1 ].individualCount > 5 )
+				sim.subpopulations[ i-1 ].outputVCFSample( sim.subpopulations[ i-1 ].individualCount, 
+																		replace = F,
+																		filePath = sim.generation + ".subPop." + i + ".vcf" ) ;
+		}
+//	print( sim.mutations() );
+	}
+}
